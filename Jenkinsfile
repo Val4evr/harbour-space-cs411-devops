@@ -12,10 +12,6 @@ pipeline {
         go '1.24.1'
     }
 
-    options {
-        timestamps()
-    }
-
     stages {
         stage('Build') {
             steps {
