@@ -1,7 +1,6 @@
-// CS411 — build half of the deployment pipeline.
-// Compiles the Go service (main.go) into a binary named `main` and promotes it
-// to a Jenkins artifact. The deploy stage (scp to target + systemd) is added on
-// top of this in the first-deployment-pipeline challenge.
+// CS411 — full deployment pipeline: build main on the Jenkins box, ship the
+// binary to a different machine (target), and run it there under systemd so it
+// survives the SSH session that started it.
 pipeline {
     agent any
 
@@ -10,6 +9,11 @@ pipeline {
     // and prepends its bin/ to PATH.
     tools {
         go '1.24.1'
+    }
+
+    environment {
+        // The other machine in the playground (see /etc/hosts: 172.16.0.3).
+        TARGET = 'target'
     }
 
     stages {
@@ -26,6 +30,56 @@ pipeline {
             steps {
                 // The build artifact: a thing that outlives the build and gets shipped.
                 archiveArtifacts artifacts: 'main', fingerprint: true
+            }
+        }
+
+        stage('Deploy to target') {
+            steps {
+                // Pull the SSH private key out of Jenkins Credentials by ID. Jenkins
+                // writes it to a temp file ($KEY), supplies the stored username
+                // ($SSH_USER), and shreds the file when this block ends. The key is
+                // never in the repo and is masked in the build log.
+                withCredentials([sshUserPrivateKey(
+                        credentialsId: 'target-ssh',
+                        keyFileVariable: 'KEY',
+                        usernameVariable: 'SSH_USER')]) {
+                    sh '''
+                        set -eu
+                        SSH_OPTS="-i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+                        # 1. SHIP: copy this run's freshly built binary to target.
+                        #    Same bytes we just built + archived — no rebuild on target.
+                        scp $SSH_OPTS main "$SSH_USER@$TARGET:/tmp/main"
+
+                        # 2. INSTALL + SUPERVISE: place the binary, write a systemd unit,
+                        #    and hand the process to systemd so it outlives this SSH session.
+                        #    The quoted heredoc (<<'REMOTE') is sent literally — no Jenkins-side
+                        #    expansion — so the unit file lands intact.
+                        ssh $SSH_OPTS "$SSH_USER@$TARGET" 'sudo bash -s' <<'REMOTE'
+set -eu
+install -m 755 /tmp/main /usr/local/bin/myapp
+
+cat > /etc/systemd/system/myapp.service <<'UNIT'
+[Unit]
+Description=CS411 hello-world Go service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/myapp
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable myapp.service
+# restart (not just start) so a re-deploy swaps in the new binary on an
+# already-running unit instead of silently keeping the old process.
+systemctl restart myapp.service
+REMOTE
+                    '''
+                }
             }
         }
     }
