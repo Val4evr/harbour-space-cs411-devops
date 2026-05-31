@@ -57,6 +57,11 @@ pipeline {
                         #    expansion — so the unit file lands intact.
                         ssh $SSH_OPTS "$SSH_USER@$TARGET" 'sudo bash -s' <<'REMOTE'
 set -eu
+
+# Dedicated, unprivileged service account. --system = no aging/login, no home,
+# /usr/sbin/nologin so it can never be logged into. Idempotent: skip if present.
+id myapp >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin myapp
+
 install -m 755 /tmp/main /usr/local/bin/myapp
 
 cat > /etc/systemd/system/myapp.service <<'UNIT'
@@ -66,7 +71,15 @@ After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/myapp
+# Run unprivileged — :4444 is > 1024 so no special capability is needed to bind it.
+User=myapp
+Group=myapp
 Restart=on-failure
+# Defense-in-depth hardening (cheap wins for a service that needs nothing special).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
