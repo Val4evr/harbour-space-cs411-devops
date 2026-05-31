@@ -1,19 +1,3 @@
-# PROMPTS.md — Challenge 3: Build and Deploy as a Docker Image (docker-build-deploy)
-
-- **Student:** Val4evr (Valeriy Proklov)
-- **Coding agent:** Claude Code (Opus 4.8)
-- **Repo:** https://github.com/Val4evr/harbour-space-cs411-devops
-- **Branch:** `challenge/deploying-using-docker`
-- **How the lab was driven:** I skipped the optional tutorials and went to the challenge.
-  The agent drove the iximiuz playground over `labctl ssh` (base64'd scripts to dodge
-  quoting) and did git ops in a local clone.
-
-## Honest summary
-
-I used the agent for the mechanical work — writing the Dockerfile and Jenkinsfile, the SSH
-key bootstrap, the credential, and the verification runs. The decisions I actually owned and
-can defend: starting with a simple single-stage image for the core, choosing how the pipeline
-reaches the docker VM, and picking the digest-pin stretch (with its tradeoff) over the others.
 
 ## Prompt-by-prompt log
 
@@ -48,10 +32,3 @@ reaches the docker VM, and picking the digest-pin stretch (with its tradeoff) ov
    hash whenever I bump the version. The agent resolved the real digest from the registry
    (`docker buildx imagetools inspect golang:1.24`) and pinned the **multi-arch manifest-index**
    digest so Docker still auto-selects the right architecture, then committed it.
-
-## What worked / what didn't
-
-- **Worked:** delegating the pipeline + bootstrap work, and having the agent probe the actual
-  topology before committing to node-vs-SSH — that caught and corrected a wrong assumption.
-- **Didn't:** the `labctl` SSH tunnel got flaky near the end, so the final digest-pin rebuild
-  wasn't re-confirmed live before submission (the earlier full pipeline run was green).
