@@ -1,32 +1,33 @@
-// CS411 — build half of the deployment pipeline.
-// Compiles the Go service (main.go) into a binary named `main` and promotes it
-// to a Jenkins artifact. The deploy stage (scp to target + systemd) is added on
-// top of this in the first-deployment-pipeline challenge.
+// CS411 — docker-build-deploy: containerize the app, treat the IMAGE as the artifact,
+// and ship it through a registry (ttl.sh) instead of scp'ing a raw binary.
 pipeline {
     agent any
 
-    // Pulls in the Go toolchain declared in JCasC (jenkins.yaml -> tool.go.installations).
-    // The name must match exactly; the golang plugin auto-installs it on first use
-    // and prepends its bin/ to PATH.
-    tools {
-        go '1.24.1'
+    environment {
+        // ttl.sh is an anonymous, transient registry — the ":2h" tag IS the time-to-live
+        // (the image is auto-deleted after 2 hours). No registry credentials needed.
+        // NOTE: ttl.sh names are global + public; a course-unique name avoids a
+        // classmate's push clobbering ours.
+        IMAGE = 'ttl.sh/val4evr-cs411:2h'
     }
 
     stages {
-        stage('Build') {
+        stage('Build image') {
             steps {
-                sh 'go version'
-                // CGO_ENABLED=0 -> a self-contained, pure-Go binary that runs on `target`
-                // even though target has no Go (and possibly a different libc).
-                sh 'CGO_ENABLED=0 go build -o main main.go'
+                // Build context is the repo root (Dockerfile + main.go live there).
+                sh 'docker build -t "$IMAGE" .'
             }
         }
 
-        stage('Archive artifact') {
+        stage('Push image') {
             steps {
-                // The build artifact: a thing that outlives the build and gets shipped.
-                archiveArtifacts artifacts: 'main', fingerprint: true
+                // Anonymous push — ttl.sh accepts it without `docker login`.
+                sh 'docker push "$IMAGE"'
             }
         }
+
+        // NEXT: a 'Deploy on docker VM' stage that pulls $IMAGE and runs it with
+        // -p 4444:4444. Added once we confirm the playground's docker-VM topology
+        // (separate node vs. ssh) — that's the other half of the core criterion.
     }
 }
