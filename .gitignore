@@ -1,0 +1,5 @@
+# Build artifacts — the binary is produced by the pipeline, never committed.
+main
+main_ec2
+main-*
+*.pem
