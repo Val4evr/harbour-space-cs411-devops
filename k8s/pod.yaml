@@ -1,0 +1,35 @@
+# Core deliverable: a Pod named literally `myapp` (the dashboard probes
+# `kubectl get pod myapp`). It pulls the image the pipeline pushed to ttl.sh and
+# serves :4444. Stretch: liveness + readiness probes, both httpGet on 4444.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+  labels:
+    app: myapp
+spec:
+  containers:
+    - name: myapp
+      image: ttl.sh/val4evr-cs411:2h
+      # ttl.sh tags are mutable and the pipeline repushes the same tag each run;
+      # Always guarantees the kubelet fetches the freshly pushed bytes, not a
+      # stale cached layer.
+      imagePullPolicy: Always
+      ports:
+        - containerPort: 4444
+      # Stretch — two probes, NOT redundant:
+      #   readiness gates whether the Pod receives traffic (removed from Service
+      #   endpoints when failing) — it never restarts the container.
+      #   liveness restarts the container when it's wedged but still "up".
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 4444
+        initialDelaySeconds: 2
+        periodSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 4444
+        initialDelaySeconds: 5
+        periodSeconds: 10
