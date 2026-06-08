@@ -1,65 +1,32 @@
-# DEBUG.md — introduction-to-builds
+# DEBUG.md — deploy-to-kubernetes
 
-## Scenario
-
-`./main` builds and runs fine on the playground's `jenkins` machine (glibc 2.39),
-but on a fresh Ubuntu 18.04 VM it dies immediately with:
-
-```
-./main: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found (required by ./main)
-```
+Scenario: the pipeline pushes the image to ttl.sh and applies the Pod, but
+`kubectl get pods` shows `ImagePullBackOff`. The `image:` in the manifest matches
+the pushed tag, and `docker pull <image>` on the Jenkins machine succeeds.
 
 ## Two ranked hypotheses
 
-1. **(Most likely) The binary is dynamically linked against a newer glibc than the target provides.**
-   The build host ships glibc 2.39 and Go's default build keeps CGO enabled (a C toolchain
-   is present), so `main` links `libc.so.6` *dynamically* and records a requirement on the
-   symbol version `GLIBC_2.34`. Ubuntu 18.04 ships glibc 2.27, which has no `GLIBC_2.34`
-   version node, so the dynamic loader can't resolve the symbol. Plausible because the error
-   names exactly this — `libc.so.6`, `version GLIBC_2.34 not found` — which is the textbook
-   signature of a forward glibc-version gap.
+1. The image expired from ttl.sh before the kubelet pulled it. ttl.sh tags are
+   transient (`:2h` IS the time-to-live), and `docker pull` on Jenkins succeeded
+   only because Jenkins built the image locally moments ago and has it cached —
+   the *kubelet*, a different host with no cache, must fetch it fresh from a
+   registry whose copy may already be gone. Verify with
+   `kubectl describe pod myapp` and read the Events — `manifest unknown` / `not
+   found` (a 404) confirms the registry no longer has it. Fix by re-running the
+   pipeline so a fresh image is pushed right before the apply (and/or widen the
+   tag, e.g. `:24h`).
 
-2. **(Less likely) libc is not the only too-new shared library the binary needs.**
-   A CGO/stdlib path (the `net` cgo DNS resolver, `os/user`) can pull in other system
-   libraries (`libpthread`, `libnss_*`) that carry their own version floors, so even after
-   libc is satisfied the binary could still fail on the old target. Plausible because
-   "runs on the build box, breaks on the old box" is the generic symptom of *any* too-new
-   dynamic dependency, not only libc.
-
-## One verification step per hypothesis
-
-1. On the **build** host, list the highest glibc symbol version the binary demands:
-   ```
-   objdump -T ./main | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
-   ```
-   If this prints `GLIBC_2.34` (or higher), H1 is confirmed — the binary's floor sits
-   above the target's 2.27.
-
-2. On the **customer** VM, confirm what it actually provides and whether libc is the only gap:
-   ```
-   ldd --version | head -1     # -> glibc 2.27 on Ubuntu 18.04
-   ldd ./main                  # every dynamic dep; "=> not found" lines flag any others
-   ```
-   If `ldd ./main` shows only `libc.so.6` as the offender, H1 alone explains it; if other
-   libraries also report missing versions, H2 is contributing too.
-
-## Fix (minimal)
-
-Produce a binary with **no glibc dependency** by disabling CGO, so Go uses its pure-Go
-runtime and links statically:
-
-```
-CGO_ENABLED=0 go build -o main main.go
-file ./main   # -> "statically linked" — no interpreter, no libc.so.6 requirement
-```
-
-The resulting binary carries no `GLIBC_*` requirements at all and runs unchanged on
-Ubuntu 18.04 (or even a `scratch` container). If CGO is genuinely required, the equivalent
-fix is to build against the *oldest* target glibc — e.g. compile inside an Ubuntu 18.04
-container — rather than on the 2.39 host.
+2. The kubelet can't reach the registry over the network (egress/DNS) even though
+   Jenkins can. The pull happens from the cluster node, whose network path to
+   ttl.sh differs from the Jenkins box's. Verify with `kubectl describe pod myapp`
+   — a `dial tcp ... timeout` / DNS error (rather than a 404) points here, and
+   `crictl pull <image>` run on the node reproduces it directly. Fix by giving
+   the node egress to the registry (or pre-loading the image onto the node with
+   `ctr images import`).
 
 ## Underlying lesson
 
-glibc is backward- but **not** forward-compatible, so a dynamically-linked binary is only
-as portable as the *oldest* glibc it will ever run against — build static (or against the
-lowest target glibc) whenever you don't control the deployment machine.
+"I can pull this image" is a statement about *my* host's cache and network;
+"the cluster can pull this image" is about a different identity (the kubelet) on
+a different host with a different cache and network path — the image must be
+reachable from *there*, at pull time, not just from where it was built.
