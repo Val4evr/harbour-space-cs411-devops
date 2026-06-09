@@ -1,28 +1,9 @@
-# DEBUG.md — deploy-to-kubernetes
-
-Scenario: the pipeline pushes the image to ttl.sh and applies the Pod, but
-`kubectl get pods` shows `ImagePullBackOff`. The `image:` in the manifest matches
-the pushed tag, and `docker pull <image>` on the Jenkins machine succeeds.
-
 ## Two ranked hypotheses
 
-1. The image expired from ttl.sh before the kubelet pulled it. ttl.sh tags are
-   transient (`:2h` IS the time-to-live), and `docker pull` on Jenkins succeeded
-   only because Jenkins built the image locally moments ago and has it cached —
-   the *kubelet*, a different host with no cache, must fetch it fresh from a
-   registry whose copy may already be gone. Verify with
-   `kubectl describe pod myapp` and read the Events — `manifest unknown` / `not
-   found` (a 404) confirms the registry no longer has it. Fix by re-running the
-   pipeline so a fresh image is pushed right before the apply (and/or widen the
-   tag, e.g. `:24h`).
+1. The image expired from ttl.sh before the kubelet pulled it. `docker pull` on Jenkins succeeded only because Jenkins built the image locally moments ago and has it cached. The kubelet must fetch it from the registry (where it already expired). Verify with `kubectl describe pod myapp`. Fix by re-running the pipeline.
 
-2. The kubelet can't reach the registry over the network (egress/DNS) even though
-   Jenkins can. The pull happens from the cluster node, whose network path to
-   ttl.sh differs from the Jenkins box's. Verify with `kubectl describe pod myapp`
-   — a `dial tcp ... timeout` / DNS error (rather than a 404) points here, and
-   `crictl pull <image>` run on the node reproduces it directly. Fix by giving
-   the node egress to the registry (or pre-loading the image onto the node with
-   `ctr images import`).
+2. The kubelet can't reach the registry over the network even though
+   Jenkins can. Verify with `kubectl describe pod myapp` looking for timeouts / DNS errors. Debug by fixing node networking to the registry.
 
 ## Underlying lesson
 

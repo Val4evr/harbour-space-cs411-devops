@@ -1,16 +1,3 @@
-<!--
-DRAFT — rewrite in your own voice before submitting. PROMPTS.md is read inside the
-Stretch and Debug dimensions, so keep the probe reasoning and the friction moment.
-Required: one specific prompt, one friction moment, one verification step. All facts
-below are accurate to the session.
--->
-
-# PROMPTS.md — deploy-to-kubernetes
-
-- **Student:** Val4evr (Valeriy Proklov)
-- **Agent:** Claude Code (Opus 4.8)
-- **Branch:** `challenge/deploy-to-kubernetes`
-- **Stretch chosen:** liveness + readiness probes (httpGet on 4444).
 
 ## Prompt-by-prompt log
 
